@@ -1,4 +1,4 @@
-# Project: How Population Aging Reshapes Healthcare Financing**
+# Project: How Population Aging Reshapes Healthcare Financing
 
 ## Overview
 This project examines how population aging influences the composition of healthcare financing, rather than the total amount of healthcare spending. Using country-level panel data from the World Bank and the WHO Global Health Expenditure Database (GHED), the analysis explores whether aging societies systematically shift healthcare costs away from households toward collective financing mechanisms such as government funding and health insurance.
