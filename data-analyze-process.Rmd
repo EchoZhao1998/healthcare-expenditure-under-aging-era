@@ -1,0 +1,476 @@
+---
+title: "Healthcare_Expenditure_in_aging_era"
+author: "Wanting Echo Zhao"
+date: "2025-12-27"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Import libary
+
+```{r echo=TRUE}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(plm)
+library(ggplot2)
+```
+
+## Read Data
+
+```{r echo=TRUE}
+ghed_raw <- read_excel("/Users/ez_us/Documents/Aging_HCE/datasets/GHED_data.XLSX", sheet= "Data")
+```
+
+### Check the variable names
+
+```{r}
+str(ghed_raw)
+```
+
+## Select relevant GHED variables
+
+```{r}
+ghed_clean <- ghed_raw %>%
+  select(
+    location,
+    code,
+    year,
+    gghed_che,
+    shi_che,
+    oops_che,
+    vhi_che
+  ) %>%
+  filter(year >= 2000 & year <= 2023) %>%
+  mutate(
+    year = as.integer(year)
+  )
+```
+
+### Sanity check
+
+```{r}
+summary(ghed_clean)
+colSums(is.na(ghed_clean))
+```
+
+## Read World Bank aging data
+
+```{r}
+aging_raw <- read_excel(
+  "/Users/ez_us/Documents/Aging_HCE/datasets/API_SP.POP.65UP.TO.ZS_DS2_en_excel_v2_1001.xls",
+  sheet = "Data",
+  skip = 3
+)
+```
+
+## Reshape Wolrd Bank data (wide to long)
+
+```{r}
+aging_long <- aging_raw %>%
+  pivot_longer(
+    cols = matches("^\\d{4}$"),
+    names_to = "year",
+    values_to = "aging_65"
+  ) %>%
+  rename(
+    location = `Country Name`,
+    code = `Country Code`
+  ) %>%
+  mutate(
+    year = as.integer(year)
+  ) %>%
+  filter(year >= 2000 & year <= 2023)
+```
+
+### Check
+
+```{r}
+str(aging_long)
+summary(aging_long$aging_65)
+```
+
+### Check for coverage gaps,which helps later when deciding which countries to keep.
+
+```{r}
+aging_long %>%
+  group_by(location) %>%
+  summarise(n_years = n()) %>%
+  arrange(n_years)
+```
+
+## Merge GHED + World Bank
+
+```{r}
+panel_data <- ghed_clean %>%
+  left_join(aging_long, by = c("code", "year"))
+```
+
+### Check result
+
+```{r}
+dim(panel_data)
+summary(panel_data)
+```
+
+## Convert to panel-data format (for models)
+
+```{r}
+panel_data <- pdata.frame(
+  panel_data,
+  index = c("code", "year")
+)
+```
+
+## First baseline models (run separately)
+
+### Example 1: Out-of-pocket share
+
+```{r}
+model_oops <- plm(
+  oops_che ~ aging_65,
+  data = panel_data,
+  model = "within"
+)
+
+summary(model_oops)
+```
+
+### Goverment financing share
+
+```{r}
+model_gov <- plm(
+  gghed_che ~ aging_65,
+  data = panel_data,
+  model = "within"
+)
+
+summary(model_gov)
+```
+
+### Social health insuramce
+
+```{r}
+model_shi <- plm(
+  shi_che ~ aging_65,
+  data = panel_data,
+  model = "within"
+)
+
+summary(model_shi)
+```
+
+### Voluntary health insurance
+
+```{r}
+model_vhi <- plm(
+  vhi_che ~ aging_65,
+  data = panel_data,
+  model = "within"
+)
+
+summary(model_vhi)
+```
+
+## Asia-focused descriptive check(bonus)
+
+```{r}
+asia_codes <- c("CHN", "JPN", "KOR", "THA")
+
+asia_data <- panel_data %>%
+  filter(code %in% asia_codes) %>%
+  as.data.frame()
+
+asia_data <- pdata.frame(
+  asia_data,
+  index = c("code", "year")
+)
+```
+
+## test - generate oop plot
+
+```{r}
+ggplot(asia_data, aes(x = year, y = oops_che, color = code, group = code)) + 
+  geom_line() + 
+  labs(
+  title = "Out-of-pocket Health Expenditure in Aging Asia Economies",
+  x = "Year",
+  y = "% of Current Health Expenditure"
+)
+```
+
+## Run financing models again
+
+### Example 1: Out-of-pocket share
+
+```{r}
+model_asia_oops <- plm(
+  oops_che ~ aging_65,
+  data = asia_data,
+  model = "within"
+)
+
+summary(model_asia_oops)
+```
+
+#### Interpretation
+
+> Holding country-specific characteristics constant, a one-percentage-point increase in the population aged 65+ is associated with a 1.5 percentage-point decline in the out-of-pocket share of health expenditure in Asian economies.
+
+### Example 2: Government financing share
+
+```{r}
+model_asia_gov <- plm(
+  gghed_che ~ aging_65,
+  data = asia_data,
+  model = "within"
+)
+
+summary(model_asia_gov)
+```
+
+### Interpretation
+
+> Aging is associated with a statistically significant increase in the government share of health expenditure.
+
+> This indicates: - Fiscal absorption of aging-related costs - Active public policy response - Alignment with UHC expansion trajectories
+
+This result explains where the OOP reduction goes. \### Example 3: Social health insurance
+
+```{r}
+model_asia_shi <- plm(
+  shi_che ~ aging_65,
+  data = asia_data,
+  model = "within"
+)
+
+summary(model_asia_shi)
+```
+
+### Example 4: Voluntary health insurance
+
+```{r}
+model_asia_vhi <- plm(
+  vhi_che ~ aging_65,
+  data = asia_data,
+  model = "within"
+)
+
+summary(model_asia_vhi)
+```
+
+```{r}
+ggplot(asia_data, aes(x = year, y = gghed_che, color = code, group = code)) + 
+  geom_line() + 
+  labs(
+  title = "Domestic General Government Health Expenditure in Aging Asia Economies",
+  x = "Year",
+  y = "% of Current Health Expenditure"
+)
+
+ggplot(asia_data, aes(x = year, y = shi_che, color = code, group = code)) + 
+  geom_line() + 
+  labs(
+  title = "Social Health Insurance in Aging Asia Economies",
+  x = "Year",
+  y = "% of Current Health Expenditure"
+)
+```
+
+# Core question: “Is the effect stronger in countries that are actually aging rapidly?”
+
+### This tests whether your results are mechanically driven by aging, not by global trends.
+
+## Calculate country-level aging change
+
+```{r}
+aging_intensity <- panel_data %>%
+  filter(year %in% c(2000, 2023)) %>%
+  select(code, year, aging_65) %>%
+  group_by(code) %>%
+  filter(n() == 2) %>%              # KEEP only countries with both years
+  ungroup() %>%
+  pivot_wider(
+    names_from = year,
+    values_from = aging_65
+  ) %>%
+  mutate(
+    aging_change = `2023` - `2000`
+  )
+```
+
+## High-aging vs low-aging (median split)
+
+```{r}
+median_change <- median(aging_intensity$aging_change, na.rm = TRUE)
+
+aging_intensity <- aging_intensity %>%
+  mutate(
+    high_aging = ifelse(aging_change >= median_change, 1, 0)
+  )
+
+panel_data <- as.data.frame(panel_data)
+
+panel_data <- panel_data %>%
+  mutate(code = as.character(code)) %>%   # ensure same type
+  left_join(
+    aging_intensity %>%
+      mutate(code = as.character(code)) %>%
+      select(code, aging_change, high_aging),
+    by = "code"
+  )
+  
+panel_data <- pdata.frame(
+  panel_data,
+  index = c("code", "year")
+)
+```
+
+## Robustness model with interaction (core result)
+
+```{r}
+model_oops_robust <- plm(
+  oops_che ~ aging_65 * high_aging,
+  data = panel_data,
+  model = "within",
+  index = c("code", "year")
+)
+
+summary(model_oops_robust)
+```
+
+```{r}
+model_gghed_robust <- plm(
+  gghed_che ~ aging_65 * high_aging,
+  data = panel_data,
+  model = "within",
+  index = c("code", "year")
+)
+
+summary(model_gghed_robust)
+```
+
+```{r}
+model_shi_robust <- plm(
+  shi_che ~ aging_65 * high_aging,
+  data = panel_data,
+  model = "within",
+  index = c("code", "year")
+)
+
+summary(model_shi_robust)
+```
+
+```{r}
+library(stargazer)
+
+stargazer(
+  model_oops_robust,
+  model_gghed_robust,
+  model_shi_robust,
+  type = "text",
+  title = "Interaction Effects of Population Aging on Health Financing Structure",
+  dep.var.labels = c("Out-of-pocket (%)", "Government (%)", "Social Health Insurance (%)"),
+  covariate.labels = c("Aging 65+", "Aging 65+ × High-aging"),
+  omit.stat = c("rsq", "adj.rsq", "f")
+)
+```
+
+Across countries, increases in the elderly population are associated with a consistent shift away from out-of-pocket healthcare spending toward government and insurance-based financing. Importantly, this shift is significantly stronger in countries experiencing faster demographic aging, suggesting that health systems actively redistribute financial responsibility as aging pressure intensifies.
+
+## Create financing components(group oop, gghed, shi, and vhi)
+
+```{r}
+hero_data <- panel_data %>%
+  as.data.frame() %>%
+  filter(!is.na(high_aging)) %>%
+  select(
+    year,
+    high_aging,
+    oops_che,
+    gghed_che,
+    shi_che,
+    vhi_che
+  )
+```
+
+## Aggregate by aging intensity and year
+
+```{r}
+hero_agg <- hero_data %>%
+  group_by(high_aging, year) %>%
+  summarise(
+    Out_of_Pocket = mean(oops_che, na.rm = TRUE),
+    Government = mean(gghed_che, na.rm = TRUE),
+    Social_Insurance = mean(shi_che, na.rm = TRUE),
+    Voluntary_Insurance = mean(vhi_che, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Reshape to long format for ggplot
+
+```{r}
+hero_long <- hero_agg %>%
+  as.data.frame() %>%   # DROP pdata.frame attributes
+  pivot_longer(
+    cols = c(
+      Out_of_Pocket,
+      Government,
+      Social_Insurance,
+      Voluntary_Insurance
+    ),
+    names_to = "Financing_Type",
+    values_to = "Share"
+  ) %>%
+  mutate(
+    Aging_Group = ifelse(
+      high_aging == 1,
+      "High-aging countries",
+      "Low-aging countries"
+    ),
+    Financing_Type = recode(
+      Financing_Type,
+      "Out_of_Pocket" = "Out-of-pocket payments",
+      "Government" = "Government financing",
+      "Social_Insurance" = "Social health insurance",
+      "Voluntary_Insurance" = "Voluntary health insurance"
+    )
+  )
+```
+
+## 
+
+```{r}
+unique(hero_long$Financing_Type)
+levels(hero_long$Financing_Type)
+str(hero_long$Financing_Type)
+
+ggplot(hero_long, aes(x = year, y = Share, fill = Financing_Type)) +
+  geom_area(alpha = 0.9, color = "white", linewidth = 0.2) +
+  facet_wrap(~ Aging_Group) +
+  scale_fill_manual(
+    values = c(
+      "Out-of-pocket payments" = "#D55E00",
+      "Government financing" = "#0072B2",
+      "Social health insurance" = "#009E73",
+      "Voluntary health insurance" = "#CC79A7"
+    )
+  ) +
+  labs(
+    title = "How Population Aging Reshapes Healthcare Financing",
+    subtitle = "Average composition of health expenditure in high- and low-aging countries (2000–2023)",
+    x = "Year",
+    y = "Share of total health expenditure (%)",
+    fill = "Financing source",
+    caption = "Source: WHO GHED; World Bank. Countries grouped by aging intensity (2000–2023)."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold")
+  )
+```
